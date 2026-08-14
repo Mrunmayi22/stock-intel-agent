@@ -16,6 +16,7 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+.claude/
 
 # Streamlit
 .streamlit/secrets.toml
