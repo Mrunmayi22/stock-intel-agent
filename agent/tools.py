@@ -356,3 +356,53 @@ if __name__ == "__main__":
     long_name = fundamentals.get("long_name") if fundamentals else None
     for n in get_news(sym, long_name=long_name):
         print(" -", n["title"], "|", n["publisher"], "|", n["published"])
+
+
+def search_symbols(query: str, limit: int = 6) -> list[dict]:
+    """
+    Resolve a free-text query (company name, partial name, or symbol) to a list
+    of matching instruments via Yahoo's search endpoint.
+    Returns a list of dicts: {symbol, name, type, exchange}. Empty list on error.
+    """
+    if not query or not query.strip():
+        return []
+    try:
+        res = yf.Search(
+            query.strip(),
+            max_results=limit,
+            enable_fuzzy_query=True,
+            include_cb=False,
+            include_nav_links=False,
+            include_research=False,
+            news_count=0,
+            lists_count=0,
+            recommended=0,
+            raise_errors=False,
+        )
+        quotes = res.quotes or []
+    except Exception:
+        return []
+    out = []
+    for q in quotes:
+        if not isinstance(q, dict):
+            continue
+        sym = q.get("symbol")
+        if not sym:
+            continue
+        name = (q.get("longname") or q.get("shortname")
+                or q.get("longName") or q.get("shortName") or sym)
+        out.append({
+            "symbol": sym,
+            "name": name,
+            "type": q.get("quoteType") or q.get("typeDisp") or "",
+            "exchange": q.get("exchDisp") or q.get("exchange") or "",
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+def resolve_symbol(query: str):
+    """Return the single best-matching symbol for a query, or None."""
+    matches = search_symbols(query, limit=1)
+    return matches[0]["symbol"] if matches else None
