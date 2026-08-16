@@ -15,6 +15,7 @@ same functions to fetch data mid-conversation later, with no rework.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -241,48 +242,37 @@ def _parse_article(article: dict) -> Optional[dict]:
     }
 
 
-# Corporate-entity words that are useless as a company "name" match term --
-# they're generic enough to appear in unrelated headlines (e.g. "the Group").
-_GENERIC_NAME_SUFFIXES = {
-    "inc", "incorporated", "corp", "corporation", "co", "company",
-    "ltd", "limited", "group", "holdings", "holding", "plc",
+_NAME_SUFFIXES = {
+    "inc", "corp", "corporation", "co", "ltd", "plc", "group", "holdings",
+    "company", "the", "and", "sa", "nv", "ag", "class",
 }
 
 
-def _derive_match_term(long_name: Optional[str]) -> Optional[str]:
-    """
-    Pull a single distinctive word out of a company's long name to match news
-    headlines against, e.g. "Apple Inc." -> "Apple", "Alphabet Inc." -> "Alphabet".
+def _match_terms(ticker: str, company_name: Optional[str]) -> set:
+    """Build the set of lowercase terms that mark a headline as company-specific:
+    the ticker base (e.g. 'aapl') plus the first distinctive word of the company
+    name (e.g. 'apple'), skipping generic suffixes like Inc/Corp."""
+    terms = set()
+    base = ticker.split(".")[0].split("-")[0].lower()
+    if len(base) >= 2:
+        terms.add(base)
+    if company_name:
+        for w in re.findall(r"[A-Za-z]+", company_name):
+            wl = w.lower()
+            if wl not in _NAME_SUFFIXES and len(wl) >= 3:
+                terms.add(wl)
+                break  # first distinctive word is enough
+    return terms
 
-    Skips generic corporate-entity words (Inc, Corp, Group, ...) in case one of
-    them ever leads the name, and returns None if no usable word is found --
-    callers must treat that as "can't filter, fall back to unfiltered news".
-    """
-    if not long_name:
-        return None
-    for raw_word in long_name.split():
-        word = raw_word.strip(".,&()").strip()
-        if word and word.lower() not in _GENERIC_NAME_SUFFIXES:
-            return word
-    return None
 
-
-def get_news(ticker: str, limit: int = 6, long_name: Optional[str] = None) -> list[dict]:
+def get_news(ticker: str, limit: int = 6, company_name: Optional[str] = None) -> list[dict]:
     """
     Return up to `limit` recent news items for `ticker` as a list of dicts:
         {title, publisher, link, published}
 
-    Articles whose title mentions the ticker symbol or the company's name
-    (e.g. "Apple" for AAPL) are ranked first; remaining slots are filled with
-    the other recent headlines, so the list is always as full as Yahoo allows.
-
-    `long_name` lets a caller that already has fundamentals skip a second
-    lookup. If it's not given, this fetches it via get_fundamentals -- and if
-    that lookup fails for any reason, relevance filtering is just skipped and
-    the plain recent-news list is returned. filtering is a nice-to-have; it
-    must never be the reason this returns fewer articles than Yahoo gave us.
-
-    Returns an empty list only when Yahoo itself returned no news.
+    Company-specific headlines are ranked first (matched on the ticker or the
+    company name), but this is LENIENT: market-wide items are kept to fill the
+    list, so the section is never left empty. Returns [] only on error/no news.
     """
     if not ticker or not ticker.strip():
         return []
@@ -302,41 +292,16 @@ def get_news(ticker: str, limit: int = 6, long_name: Optional[str] = None) -> li
     if not parsed:
         return []
 
-    recent = parsed[:limit]
+    # Rank company-specific first, keep the rest (lenient), then trim to limit.
+    terms = _match_terms(symbol, company_name)
+    if terms:
+        relevant, others = [], []
+        for it in parsed:
+            title = (it.get("title") or "").lower()
+            (relevant if any(t in title for t in terms) else others).append(it)
+        parsed = relevant + others
 
-    name = long_name
-    if not name:
-        try:
-            fundamentals = get_fundamentals(symbol)
-            name = fundamentals.get("long_name") if fundamentals else None
-        except Exception:
-            name = None
-
-    match_term = _derive_match_term(name)
-    if not match_term:
-        return recent
-
-    symbol_lower = symbol.lower()
-    term_lower = match_term.lower()
-
-    relevant: list[dict] = []
-    others: list[dict] = []
-    for item in parsed:
-        title_lower = item["title"].lower()
-        if symbol_lower in title_lower or term_lower in title_lower:
-            relevant.append(item)
-        else:
-            others.append(item)
-
-    ranked = (relevant + others)[:limit]
-
-    # Safety net: filtering should only ever reorder, never shrink the list.
-    # If it somehow does, fall back to the plain recent list rather than
-    # show a sparser result than Yahoo actually gave us.
-    if len(ranked) < 3 and len(recent) >= 3:
-        return recent
-
-    return ranked
+    return parsed[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -347,25 +312,29 @@ if __name__ == "__main__":
 
     sym = sys.argv[1] if len(sys.argv) > 1 else "AAPL"
     print(f"Fundamentals for {sym}:")
-    fundamentals = get_fundamentals(sym)
-    print(fundamentals)
-    print(f"\nPrice rows (1y): ", end="")
+    print(get_fundamentals(sym))
+    print("\nPrice rows (1y): ", end="")
     hist = get_price_history(sym, "1y")
     print(len(hist) if hist is not None else "None")
     print(f"\nNews for {sym}:")
-    long_name = fundamentals.get("long_name") if fundamentals else None
-    for n in get_news(sym, long_name=long_name):
+    for n in get_news(sym):
         print(" -", n["title"], "|", n["publisher"], "|", n["published"])
 
 
+# ---------------------------------------------------------------------------
+# Symbol search / name resolution  (added for name->ticker lookup)
+# ---------------------------------------------------------------------------
 def search_symbols(query: str, limit: int = 6) -> list[dict]:
     """
     Resolve a free-text query (company name, partial name, or symbol) to a list
     of matching instruments via Yahoo's search endpoint.
-    Returns a list of dicts: {symbol, name, type, exchange}. Empty list on error.
+
+    Returns a list of dicts: {symbol, name, type, exchange}. Empty list on error
+    or no match. Fuzzy matching is enabled so light typos still resolve.
     """
     if not query or not query.strip():
         return []
+
     try:
         res = yf.Search(
             query.strip(),
@@ -382,27 +351,84 @@ def search_symbols(query: str, limit: int = 6) -> list[dict]:
         quotes = res.quotes or []
     except Exception:
         return []
-    out = []
+
+    out: list[dict] = []
     for q in quotes:
         if not isinstance(q, dict):
             continue
         sym = q.get("symbol")
         if not sym:
             continue
-        name = (q.get("longname") or q.get("shortname")
-                or q.get("longName") or q.get("shortName") or sym)
-        out.append({
-            "symbol": sym,
-            "name": name,
-            "type": q.get("quoteType") or q.get("typeDisp") or "",
-            "exchange": q.get("exchDisp") or q.get("exchange") or "",
-        })
+        name = (
+            q.get("longname")
+            or q.get("shortname")
+            or q.get("longName")
+            or q.get("shortName")
+            or sym
+        )
+        out.append(
+            {
+                "symbol": sym,
+                "name": name,
+                "type": q.get("quoteType") or q.get("typeDisp") or "",
+                "exchange": q.get("exchDisp") or q.get("exchange") or "",
+            }
+        )
         if len(out) >= limit:
             break
     return out
 
 
-def resolve_symbol(query: str):
+def resolve_symbol(query: str) -> Optional[str]:
     """Return the single best-matching symbol for a query, or None."""
     matches = search_symbols(query, limit=1)
     return matches[0]["symbol"] if matches else None
+
+
+# ---------------------------------------------------------------------------
+# "Explain the Move": significant price moves + date-matched news
+# ---------------------------------------------------------------------------
+def detect_significant_moves(price_df, top_n: int = 3, min_pct: float = 2.5) -> list[dict]:
+    """
+    Return the largest single-period % moves in a price frame.
+
+    Each item: {date (datetime.date), pct (float), close (float)}.
+    Only moves whose absolute % change >= min_pct are considered; the top_n by
+    magnitude are returned. Empty list if the frame is too small or has no
+    qualifying moves.
+    """
+    if price_df is None or len(price_df) < 2:
+        return []
+    df = price_df.copy()
+    df["pct"] = df["Close"].pct_change() * 100
+    df = df.dropna(subset=["pct"])
+    sig = df[df["pct"].abs() >= min_pct]
+    if sig.empty:
+        return []
+    order = sig["pct"].abs().sort_values(ascending=False).index
+    out = []
+    for i in order[:top_n]:
+        row = sig.loc[i]
+        d = row["Date"]
+        out.append({
+            "date": d.date() if hasattr(d, "date") else d,
+            "pct": float(row["pct"]),
+            "close": float(row["Close"]),
+        })
+    return out
+
+
+def news_near_date(news: list, target_date, window_days: int = 3) -> list[dict]:
+    """Return news items published within +/- window_days of target_date."""
+    matches = []
+    for n in (news or []):
+        p = n.get("published")
+        pdate = p.date() if hasattr(p, "date") else None
+        if pdate is None:
+            continue
+        try:
+            if abs((pdate - target_date).days) <= window_days:
+                matches.append(n)
+        except Exception:
+            continue
+    return matches

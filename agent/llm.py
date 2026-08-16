@@ -79,3 +79,28 @@ def chat(messages, model: str = SMART_MODEL, temperature: float = 0.3,
 
 def has_key() -> bool:
     return bool(os.getenv("GROQ_API_KEY"))
+
+
+def chat_raw(messages, model: str = SMART_MODEL, tools=None, tool_choice: str = "auto",
+             temperature: float = 0.3, max_tokens: int = 1200, reasoning_effort: str = "low"):
+    """
+    Like chat(), but returns the full assistant *message object* (which may carry
+    .tool_calls) instead of just text, so callers can run a tool-calling loop.
+    Returns None on any failure. reasoning_format is forced to 'hidden', which
+    Groq requires when tool calls are in play.
+    """
+    client = get_client()
+    if client is None:
+        return None
+    kwargs = dict(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens)
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = tool_choice
+    if model.startswith("openai/gpt-oss"):
+        kwargs["reasoning_effort"] = reasoning_effort
+        kwargs["reasoning_format"] = "hidden"
+    try:
+        resp = client.chat.completions.create(**kwargs)
+        return resp.choices[0].message
+    except Exception:
+        return None
