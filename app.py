@@ -89,6 +89,7 @@ st.markdown(
       html, body, [class*="css"], .stApp {{ font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }}
       .stApp {{ background-color: #0b0e11; }}
       #MainMenu, header, footer {{ visibility: hidden; }}
+      div[data-testid="InputInstructions"] {{ display: none; }}
       .block-container {{ padding-top: 2.2rem; padding-bottom: 2rem; max-width: 1180px; margin: 0 auto; }}
 
       .stTextInput input {{ background-color: {CARD_BG}; color: #e6edf3; border: 1px solid {BORDER};

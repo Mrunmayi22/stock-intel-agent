@@ -23,9 +23,21 @@ FAST_MODEL = "openai/gpt-oss-20b"     # classification / guardrail
 SMART_MODEL = "openai/gpt-oss-120b"   # analyst brief / Q&A
 
 
+def _resolve_key():
+    """Find the Groq key from the environment/.env (local) or st.secrets (cloud)."""
+    key = os.getenv("GROQ_API_KEY")
+    if key:
+        return key
+    try:
+        import streamlit as st
+        return st.secrets.get("GROQ_API_KEY")
+    except Exception:
+        return None
+
+
 def get_client():
     """Return a Groq client, or None if no API key is configured."""
-    key = os.getenv("GROQ_API_KEY")
+    key = _resolve_key()
     if not key:
         return None
     try:
@@ -78,7 +90,7 @@ def chat(messages, model: str = SMART_MODEL, temperature: float = 0.3,
 
 
 def has_key() -> bool:
-    return bool(os.getenv("GROQ_API_KEY"))
+    return bool(_resolve_key())
 
 
 def chat_raw(messages, model: str = SMART_MODEL, tools=None, tool_choice: str = "auto",
