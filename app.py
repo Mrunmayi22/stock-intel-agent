@@ -6,6 +6,7 @@ side-by-side metrics, comparative AI brief). UI layer only; logic lives in agent
 """
 
 import html
+import re
 from datetime import datetime, timezone
 
 import plotly.graph_objects as go
@@ -206,15 +207,47 @@ def sign_for(f):
     return "$" if f.get("currency") == "USD" else f"{f.get('currency','')} "
 
 
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+
+
+def _inline_md(s):
+    """Convert inline **bold** (already HTML-escaped text) to <strong>."""
+    return _BOLD_RE.sub(r"<strong>\1</strong>", s)
+
+
 def safe_html(text):
-    """LLM text going into an unsafe_allow_html block: escape HTML, neutralize the
-    '$' LaTeX delimiter (Streamlit reads $...$ as math), and keep line breaks."""
-    return html.escape(text or "").replace("$", "&#36;").replace("\n", "<br>")
+    """LLM text going into an unsafe_allow_html block. Escapes HTML, neutralizes
+    the '$' LaTeX delimiter, and renders the model's light markdown (**bold** and
+    '- ' bullet lists) as real HTML instead of showing raw asterisks."""
+    if not text:
+        return ""
+    escaped = html.escape(text).replace("$", "&#36;")
+    parts, bullets = [], []
+
+    def flush():
+        if bullets:
+            items = "".join(f"<li>{_inline_md(b)}</li>" for b in bullets)
+            parts.append(f'<ul style="margin:0.3rem 0 0.4rem 1.1rem;">{items}</ul>')
+            bullets.clear()
+
+    for line in escaped.split("\n"):
+        stripped = line.strip()
+        m = re.match(r"^[-*]\s+(.*)", stripped)
+        if m:
+            bullets.append(m.group(1))
+        elif stripped == "":
+            flush()
+            parts.append("<br>")
+        else:
+            flush()
+            parts.append(_inline_md(line) + "<br>")
+    flush()
+    return "".join(parts)
 
 
 def safe_md(text):
     """LLM text going into st.markdown as plain markdown: only neutralize '$' so a
-    pair of dollar amounts isn't parsed as inline LaTeX."""
+    pair of dollar amounts isn't parsed as inline LaTeX (markdown renders natively)."""
     return (text or "").replace("$", "&#36;")
 
 
