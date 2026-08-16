@@ -424,28 +424,33 @@ def render_comparison(ta, fa, tb, fb):
                     unsafe_allow_html=True)
         render_header(fb, big=False)
 
-    # Overlaid, normalized (% change from range start) chart
+    # Overlaid comparison chart (left) + chat (right), mirroring single mode
     ha = cached_history(ta, RANGES[range_label])
     hb = cached_history(tb, RANGES[range_label])
-    st.markdown('<div class="section-label">Relative Performance (%)</div>', unsafe_allow_html=True)
-    if ha is None or ha.empty or hb is None or hb.empty:
-        st.info("Not enough price history to compare over this range.")
-    else:
-        fig = go.Figure()
-        for h, color, name in [(ha, A_COLOR, ta), (hb, B_COLOR, tb)]:
-            base = h["Close"].iloc[0]
-            norm = (h["Close"] / base - 1) * 100 if base else h["Close"] * 0
-            fig.add_trace(go.Scatter(x=h["Date"], y=norm, mode="lines",
-                                     line=dict(color=color, width=2), name=name,
-                                     hovertemplate=name + " %{y:+.2f}%<extra></extra>"))
-        fig.update_layout(height=CHART_H, margin=dict(l=0, r=0, t=6, b=0),
-                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          hovermode="x unified",
-                          legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0, font=dict(color=MUTED)),
-                          xaxis=dict(showgrid=False, showline=False, zeroline=False, color=MUTED, rangeslider=dict(visible=False)),
-                          yaxis=dict(showgrid=True, gridcolor="rgba(35,42,51,0.5)", zeroline=True,
-                                     zerolinecolor=BORDER, color=MUTED, ticksuffix="%"))
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    col_chart, col_chat = st.columns([1.5, 1], gap="large")
+    with col_chart:
+        st.markdown('<div class="section-label" style="margin-top:0;">Relative Performance (%)</div>',
+                    unsafe_allow_html=True)
+        if ha is None or ha.empty or hb is None or hb.empty:
+            st.info("Not enough price history to compare over this range.")
+        else:
+            fig = go.Figure()
+            for h, color, name in [(ha, A_COLOR, ta), (hb, B_COLOR, tb)]:
+                base = h["Close"].iloc[0]
+                norm = (h["Close"] / base - 1) * 100 if base else h["Close"] * 0
+                fig.add_trace(go.Scatter(x=h["Date"], y=norm, mode="lines",
+                                         line=dict(color=color, width=2), name=name,
+                                         hovertemplate=name + " %{y:+.2f}%<extra></extra>"))
+            fig.update_layout(height=CHART_H, margin=dict(l=0, r=0, t=6, b=0),
+                              paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                              hovermode="x unified",
+                              legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0, font=dict(color=MUTED)),
+                              xaxis=dict(showgrid=False, showline=False, zeroline=False, color=MUTED, rangeslider=dict(visible=False)),
+                              yaxis=dict(showgrid=True, gridcolor="rgba(35,42,51,0.5)", zeroline=True,
+                                         zerolinecolor=BORDER, color=MUTED, ticksuffix="%"))
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    with col_chat:
+        render_chat(ta, fa, cached_news(ta), scope_key=f"{ta}|{tb}")
 
     # Side-by-side metrics table
     st.markdown('<div class="section-label">Key Stats</div>', unsafe_allow_html=True)
@@ -476,10 +481,6 @@ def render_comparison(ta, fa, tb, fb):
                if not llm.has_key() else "AI comparison is unavailable right now — try again shortly.")
         st.markdown(f'<div class="ai-panel"><div class="ai-label">🤖 AI Analyst</div>'
                     f'<div class="ai-muted">{msg}</div></div>', unsafe_allow_html=True)
-
-    # Chat also lives here in compare mode; it can fetch either ticker on demand.
-    st.markdown('<div class="section-label">Chat</div>', unsafe_allow_html=True)
-    render_chat(ta, fa, cached_news(ta), scope_key=f"{ta}|{tb}")
 
 
 # ------------------------------- controls ---------------------------------- #
